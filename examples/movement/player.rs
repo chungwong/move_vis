@@ -1,17 +1,144 @@
+use std::convert::TryFrom;
+use std::time::{Duration, Instant};
+
 use bevy::prelude::*;
 use bevy_rapier2d::prelude::*;
-use nalgebra::Vector2;
 
 use move_vis::TrackMovement;
 
 use crate::PlayerMovementSettings;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Direction {
+    Left = -1,
+    Neutral = 0,
+    Right = 1,
+}
+
+impl Direction {
+    fn to_f32(self) -> f32 {
+        match self {
+            Self::Left => -1.0,
+            Self::Right => 1.0,
+            Self::Neutral => 0.0,
+        }
+    }
+}
+
+impl Default for Direction {
+    fn default() -> Self {
+        Direction::Neutral
+    }
+}
+
+impl TryFrom<f32> for Direction {
+    type Error = ();
+
+    fn try_from(v: f32) -> Result<Self, Self::Error> {
+        match v as isize {
+            -1 => Ok(Direction::Left),
+            1 => Ok(Direction::Right),
+            0 => Ok(Direction::Neutral),
+            _ => Err(()),
+        }
+    }
+}
+
+struct DashInput {
+    input_timer: Timer,
+    direction: Direction,
+}
+
+impl Default for DashInput {
+    fn default() -> Self {
+        Self {
+            input_timer: Timer::new(Duration::from_millis(200), false),
+            direction: Direction::Neutral,
+        }
+    }
+}
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_startup_system(setup_player)
-            .add_system(control_player);
+        app.init_resource::<DashInput>()
+            .add_startup_system(setup_player)
+            .add_system(check_standing)
+            .add_system(dash.after(check_standing))
+            .add_system(run.after(check_standing))
+            .add_system(jump.after(check_standing));
+    }
+}
+
+fn check_standing(
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut PlayerControl)>,
+    rapier_context: Res<RapierContext>,
+) {
+    for (player_entity, mut player_control) in query.iter_mut() {
+        if get_standing_normal(&rapier_context, &player_entity).is_some() {
+            player_control.last_stood_time = time.last_update();
+        }
+    }
+}
+
+fn dash(
+    time: Res<Time>,
+    mut dash_input: Local<DashInput>,
+    input: Res<Input<KeyCode>>,
+    mut query: Query<(Entity, &mut Velocity, &mut GravityScale, &mut PlayerControl)>,
+    rapier_context: Res<RapierContext>,
+    player_movement_settings: Res<PlayerMovementSettings>,
+) {
+    for (player_entity, mut velocity, mut gravity_scale, mut player_control) in query.iter_mut() {
+        let dir = if input.just_pressed(KeyCode::A) || input.just_pressed(KeyCode::Left) {
+            Direction::Left
+        } else if input.just_pressed(KeyCode::D) || input.just_pressed(KeyCode::Right) {
+            Direction::Right
+        } else {
+            Direction::Neutral
+        };
+
+        let standing_normal = get_standing_normal(&rapier_context, &player_entity);
+
+        if let Some(normal) = standing_normal {
+            // if it is standing on something and LEFT or Right is pressed
+            if normal == Vec2::Y && matches!(&dir, Direction::Left | Direction::Right) {
+                if dash_input.input_timer.finished() {
+                    // store the input, to check if the consecutive inputs are in the same dir
+                    dash_input.direction = dir;
+
+                    // reset the timer
+                    dash_input.input_timer.reset();
+
+                    *gravity_scale = GravityScale(player_movement_settings.gravity_scale);
+                } else if !dash_input.input_timer.finished() && dir == dash_input.direction {
+                    velocity.linvel = get_run_velocity(
+                        &velocity.linvel,
+                        dir.to_f32() * player_movement_settings.dash_speed,
+                        time.delta_seconds(),
+                    );
+
+                    player_control.dashing = true;
+
+                    *gravity_scale = GravityScale(0.0);
+                } else {
+                    *gravity_scale = GravityScale(player_movement_settings.gravity_scale);
+                }
+            }
+        }
+
+        if dash_input.input_timer.finished() && player_control.dashing {
+            player_control.dashing = false;
+
+            // if dash is finished, reset gravity scale otherwise, when doing a dash jump
+            // and holding space, the player will fly
+            *gravity_scale = GravityScale(player_movement_settings.gravity_scale);
+        }
+    }
+    if !dash_input.input_timer.finished() {
+        dash_input.input_timer.tick(time.delta());
     }
 }
 
@@ -19,112 +146,174 @@ impl Plugin for PlayerPlugin {
 enum JumpStatus {
     CanJump,
     InitiateJump,
+    InitiateWallJump,
     GoingUp,
     StoppingUp,
     GoingDown,
+    WallSliding,
 }
 
 fn setup_player(mut commands: Commands, player_movement_settings: Res<PlayerMovementSettings>) {
     commands
         .spawn()
         .insert(RigidBody::Dynamic)
-        .insert(LockedAxes::ROTATION_LOCKED)
         .insert(Damping {
-            linear_damping: player_movement_settings.damping,
+            linear_damping: 10.0,
             ..default()
         })
-        .insert(Friction::new(1.5))
-        .insert(Collider::cuboid(0.25, 1.0))
-        .insert(GravityScale::default())
-        .insert(MassProperties::default())
+        .insert(LockedAxes::ROTATION_LOCKED)
+        .insert(Collider::cuboid(5.0, 5.0))
+        .insert(GravityScale(player_movement_settings.gravity_scale))
         .insert(ExternalImpulse::default())
+        .insert(ExternalForce::default())
+        .insert(ColliderMassProperties::Density(1.0))
+        .insert(MassProperties {
+            mass: 1.0,
+            ..default()
+        })
         .insert(Velocity::zero())
-        .insert(Transform::default())
+        .insert_bundle(TransformBundle::from(Transform {
+            translation: Vec3::new(-400.0, -40.0, 0.0),
+            ..default()
+        }))
         .insert(TrackMovement)
-        .insert(PlayerControl {
-            mid_jump: false,
-            last_stood_on: Vec2::new(0.0, 1.0),
-            stood_on_potential: 0.0,
-        });
+        .insert(PlayerControl::new());
 }
 
-#[derive(Component)]
+#[derive(Component, Debug, Default)]
 pub struct PlayerControl {
-    mid_jump: bool,
-    last_stood_on: Vec2,
-    stood_on_potential: f32,
+    dashing: bool,
+    rising: bool,
+    jumping: bool,
+    wall_sliding: bool,
+    wall_jumping: bool,
+    last_stood_normal: Vec2,
+    last_stood_time: Option<Instant>,
 }
 
-// logic is copied from https://github.com/idanarye/testing-physics-based-movement
-fn control_player(
-    time: Res<Time>,
-    input: Res<Input<KeyCode>>,
-    mut query: Query<(
-        Entity,
-        &mut Velocity,
-        &mut GravityScale,
-        &mut ExternalImpulse,
-        &mut PlayerControl,
-    )>,
-    player_movement_settings: Res<PlayerMovementSettings>,
-    rapier_context: Res<RapierContext>,
-) {
-    let is_jumping = input.pressed(KeyCode::Space);
-    let mut target_speed: f32 = 0.0;
-
-    if input.pressed(KeyCode::A) || input.pressed(KeyCode::Left) {
-        target_speed -= 1.0;
+impl PlayerControl {
+    fn new() -> Self {
+        Self {
+            last_stood_normal: Vec2::Y,
+            ..default()
+        }
     }
+}
 
-    if input.pressed(KeyCode::D) || input.pressed(KeyCode::Right) {
-        target_speed += 1.0;
-    }
+fn get_run_velocity(velocity: &Vec2, speed: f32, time_delta: f32) -> Vec2 {
+    let wall_jump_lerp = 10.;
+    velocity.lerp(Vec2::new(speed, velocity.y), wall_jump_lerp * time_delta)
+}
 
-    for (
-        player_entity,
-        mut velocity,
-        mut gravity_scale,
-        mut external_impulse,
-        mut player_control,
-    ) in query.iter_mut()
-    {
-        let player_handle = rapier_context.entity2body().get(&player_entity);
-
-        let standing_on = rapier_context
-            .contacts_with(player_entity)
-            .filter(|contact| contact.has_any_active_contacts())
-            .flat_map(|contact| {
-                contact.raw.manifolds.iter().filter_map(|contact_manifold| {
-                    if contact_manifold.data.rigid_body1.as_ref() == player_handle {
-                        Some(-contact_manifold.data.normal)
-                    } else if contact_manifold.data.rigid_body2.as_ref() == player_handle {
-                        Some(contact_manifold.data.normal)
+/// https://en.wikipedia.org/wiki/Normal_(geometry)
+fn get_standing_normal(
+    rapier_context: &Res<RapierContext>,
+    player_entity: &Entity,
+) -> Option<Vec2> {
+    let mut standing_normal = rapier_context
+        .contacts_with(*player_entity)
+        .filter(|contact| contact.has_any_active_contacts())
+        .flat_map(|contact| {
+            contact
+                .manifolds()
+                .filter_map(|contact_manifold| {
+                    if contact.collider1() == *player_entity {
+                        Some(-contact_manifold.normal())
+                    } else if contact.collider2() == *player_entity {
+                        Some(contact_manifold.normal())
                     } else {
                         None
                     }
                 })
-            })
-            .max_by_key(|normal| float_ord::FloatOrd(normal.dot(&Vector2::new(0.0, 1.0))));
+                .max_by_key(|normal| float_ord::FloatOrd(normal.dot(Vec2::Y)))
+        })
+        .max_by_key(|normal| float_ord::FloatOrd(normal.dot(Vec2::Y)));
 
-        // determine jump status of player
+    if let Some(mut normal) = standing_normal {
+        // truncate float number with a `long tail`
+        if normal.y < 0.0001 {
+            normal.y = 0.0;
+        }
+
+        standing_normal = Some(normal);
+    }
+
+    standing_normal
+}
+
+fn jump(
+    time: Res<Time>,
+    input: Res<Input<KeyCode>>,
+    mut query: Query<(Entity, &mut Velocity, &mut PlayerControl)>,
+    player_movement_settings: Res<PlayerMovementSettings>,
+    rapier_context: Res<RapierContext>,
+    rapier_config: Res<RapierConfiguration>,
+) {
+    let pressed_jump = input.pressed(KeyCode::Space);
+
+    // let jump_impulse = 10000.0; // SCALE = 1.0
+    // let jump_impulse = 100.0;  // SCALE = 10.0
+    // let jump_impulse = 1.0;   // SCALE = 100.0
+    // let jump_impulse = player_movement_settings.jump_impulse / SCALE.powf(2.0);
+
+    for (player_entity, mut velocity, mut player_control) in query.iter_mut() {
+        // find a normal of the standing ground where the player stands on
+        let mut standing_normal = get_standing_normal(&rapier_context, &player_entity);
+
+        // coyote time if
+        // 1. the Y normal is none(falling)
+        // 2. player pressed_jump
+        // 3. the player is not currently jumping
+        if standing_normal.is_none() && pressed_jump && !player_control.jumping {
+            let duration = Duration::from_millis(player_movement_settings.coyote_time_ms);
+            match (player_control.last_stood_time, time.last_update()) {
+                (Some(last_stood_time), Some(last_update))
+                    if last_update - last_stood_time <= duration =>
+                {
+                    standing_normal = Some(player_control.last_stood_normal);
+                }
+                _ => (),
+            };
+        }
+
+        player_control.wall_sliding = false;
+
+        if let Some(normal) = standing_normal {
+            // reset player_control.wall_jumping and player_control.jumping when it is jump back on ground
+            // 1. on a ground
+            // 2. on wall grab
+            if normal.x.abs() == 1.0 || normal.y == 1.0 {
+                player_control.jumping = false;
+                player_control.wall_jumping = false;
+            }
+        }
+
+        // determie the jump status of the player
         let jump_status = (|| {
-            if let Some(standing_on) = standing_on {
-                player_control.last_stood_on = standing_on.into();
-                player_control.stood_on_potential = 1.0;
-                if 0.0 < standing_on.dot(&Vector2::new(0.0, 1.0)) {
-                    if is_jumping {
+            if let Some(normal) = standing_normal {
+                player_control.last_stood_normal = normal;
+
+                // // wall grab and slide
+                if normal.x.abs() == 1.0
+                    && normal.y == 0.0
+                    && (input.pressed(KeyCode::D) || input.pressed(KeyCode::A))
+                {
+                    if input.just_pressed(KeyCode::Space) {
+                        return JumpStatus::InitiateWallJump;
+                    }
+                    return JumpStatus::WallSliding;
+                }
+
+                if 0.0 < normal.dot(Vec2::Y) && normal.y > 0.001 {
+                    if pressed_jump {
                         return JumpStatus::InitiateJump;
                     }
                     return JumpStatus::CanJump;
                 }
             }
 
-            player_control.stood_on_potential = (player_control.stood_on_potential
-                - time.delta().as_secs_f32() * player_movement_settings.stood_on_time_coefficient)
-                .max(0.0);
-
             if 0.0 <= velocity.linvel.y {
-                if is_jumping && player_control.mid_jump {
+                if pressed_jump && player_control.rising {
                     JumpStatus::GoingUp
                 } else {
                     JumpStatus::StoppingUp
@@ -135,86 +324,75 @@ fn control_player(
         })();
 
         match jump_status {
-            JumpStatus::GoingDown => gravity_scale.0 = 5.0,
-            _ => gravity_scale.0 = 1.0,
-        };
-
-        let mut jump_impulse = Vec2::new(0.0, 0.0);
-
-        match jump_status {
             JumpStatus::CanJump => {
-                player_control.mid_jump = false;
+                player_control.rising = false;
             }
             JumpStatus::InitiateJump => {
-                player_control.mid_jump = true;
-                jump_impulse =
-                    Vec2::new(0.0, 1.0) * player_movement_settings.jump_power_coefficient;
+                velocity.linvel += Vec2::Y * player_movement_settings.jump_power_coefficient;
+
+                player_control.rising = true;
+
+                // indicate the player is jumping, it will only be reset when it touches the ground
+                // or wall grab or something similar
+                player_control.jumping = true;
             }
             JumpStatus::GoingUp => {
-                player_control.mid_jump = true;
+                player_control.rising = true;
             }
             JumpStatus::StoppingUp => {
-                player_control.mid_jump = false;
-                velocity.linvel.y *= player_movement_settings
-                    .jump_brake_coefficient
-                    .powf(time.delta().as_secs_f32());
-                if velocity.linvel.y < player_movement_settings.start_fall_before_peak {
-                    velocity.linvel.y -= player_movement_settings.start_of_fall_gravity_boost
-                        * time.delta().as_secs_f32();
-                }
+                velocity.linvel.y += rapier_config.gravity.y
+                    * player_movement_settings.jump_break_factor
+                    * time.delta_seconds();
+                player_control.rising = false;
             }
             JumpStatus::GoingDown => {
-                if -player_movement_settings.start_of_fall_range < velocity.linvel.y {
-                    // reminder: linvel.y is negative here
-                    velocity.linvel.y -= player_movement_settings.start_of_fall_gravity_boost
-                        * time.delta().as_secs_f32();
-                } else {
-                    velocity.linvel.y *= player_movement_settings
-                        .fall_boost_coefficient
-                        .powf(time.delta().as_secs_f32());
-                }
-                player_control.mid_jump = false;
+                velocity.linvel.y += rapier_config.gravity.y
+                    * player_movement_settings.fall_factor
+                    * time.delta_seconds();
+                player_control.rising = false;
+            }
+            JumpStatus::WallSliding => {
+                player_control.wall_sliding = true;
+                player_control.rising = false;
+
+                // wall slide
+                // velocity.linvel.y += rapier_config.gravity.y * player_movement_settings.slide_factor * time.delta_seconds();
+
+                // wall grab
+                velocity.linvel.y = 0.0;
+            }
+            JumpStatus::InitiateWallJump => {
+                player_control.wall_jumping = true;
+
+                velocity.linvel.x = Vec2::X.x * player_movement_settings.run_speed;
+                velocity.linvel.y = Vec2::Y.y * player_movement_settings.jump_power_coefficient;
             }
         }
+    }
+}
 
-        let mut up_now = Vec2::new(0.0, 1.0);
-        up_now = (1.0 - player_control.stood_on_potential) * up_now
-            + player_control.stood_on_potential * player_control.last_stood_on;
+fn run(
+    time: Res<Time>,
+    input: Res<Input<KeyCode>>,
+    mut query: Query<(&mut Velocity, &PlayerControl)>,
+    player_movement_settings: Res<PlayerMovementSettings>,
+) {
+    let target_speed: f32 = if input.pressed(KeyCode::A) || input.pressed(KeyCode::Left) {
+        -1.0
+    } else if input.pressed(KeyCode::D) || input.pressed(KeyCode::Right) {
+        1.0
+    } else {
+        0.0
+    };
 
-        let movement_vector = bevy::math::Mat2::from_angle(-std::f32::consts::FRAC_PI_2) * up_now;
-
-        let current_speed =
-            velocity.linvel.dot(movement_vector) / player_movement_settings.max_speed;
-
-        if (0.0 < target_speed && target_speed <= current_speed)
-            || (target_speed < 0.0 && current_speed <= target_speed)
-        {
-            continue;
+    for (mut velocity, player_control) in query.iter_mut() {
+        // if wall jumping, not able to move in air
+        if !player_control.wall_jumping {
+            velocity.linvel = get_run_velocity(
+                &velocity.linvel,
+                target_speed * player_movement_settings.run_speed,
+                time.delta_seconds(),
+            );
         }
-
-        let impulse = target_speed - current_speed;
-        let impulse = if 1.0 < impulse.abs() {
-            impulse.signum()
-        } else {
-            impulse.signum()
-                * impulse
-                    .abs()
-                    .powf(player_movement_settings.impulse_exponent)
-        };
-        let mut impulse = movement_vector
-            * time.delta().as_secs_f32()
-            * player_movement_settings.impulse_coefficient
-            * impulse;
-
-        let uphill = impulse.normalize().dot(Vec2::new(0.0, 1.0));
-        if 0.01 <= uphill {
-            let efficiency = if target_speed.signum() as i32 == current_speed.signum() as i32 {
-                player_movement_settings.uphill_move_exponent
-            } else {
-                player_movement_settings.downhill_brake_exponent
-            };
-            impulse *= 1.0 - uphill.powf(efficiency);
-        }
-        external_impulse.impulse = impulse + jump_impulse;
     }
 }

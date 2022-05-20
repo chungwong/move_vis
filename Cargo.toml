@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 bevy = { version = "0.7.0", default-features = false }
-bevy_egui = "0.13.0"
-bevy_rapier2d = { version = "0.13.0" }
+bevy_egui = "0.14.0"
+bevy_rapier2d = { version = "0.14.0" }
 heron = "3.0.0"
 
 [features]
@@ -15,5 +15,5 @@ bevy_rapier = []
 heron = []
 
 [dev-dependencies]
+bevy = { version = "0.7.0", features = [ "dynamic" ] }
 float-ord = "0.3.2"
-nalgebra = "*"
