@@ -28,7 +28,7 @@ impl Default for MoveVisConfig {
     }
 }
 
-#[derive(Component)]
+#[derive(Clone, Component, Default)]
 pub struct TrackMovement;
 
 #[derive(Component, Debug, Default)]

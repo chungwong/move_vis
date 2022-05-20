@@ -11,15 +11,18 @@ impl Plugin for ArenaPlugin {
 
 fn setup_arena(mut commands: Commands) {
     for (x, y, half_width, half_height, rotation) in [
-        (0.0, -4.0, 15.0, 1.0, 0.0),
-        (7.0, 2.0, 2.0, 0.5, 0.0),
-        (-7.0, 0.0, 2.0, 0.5, 0.0),
-        (20.0, 2.5, 10.0, 1.0, std::f32::consts::FRAC_PI_4),
+        (0.0, -80.0, 1000.0, 20.0, 0.0),
+        (120.0, 40.0, 40.0, 10.0, 0.0),
+        (-120.0, 0.0, 40.0, 10.0, 0.0),
+        (450.0, 50.0, 200.0, 20.0, std::f32::consts::FRAC_PI_4),
+        (-600.0, 50.0, 200.0, 20.0, std::f32::consts::FRAC_PI_2),
     ] {
         commands
             .spawn()
             .insert(RigidBody::Fixed)
-            .insert(Transform::from_xyz(x, y, 0.0).with_rotation(Quat::from_rotation_z(rotation)))
+            .insert_bundle(TransformBundle::from(
+                Transform::from_xyz(x, y, 0.0).with_rotation(Quat::from_rotation_z(rotation)),
+            ))
             .insert(Collider::cuboid(half_width, half_height));
     }
 }
