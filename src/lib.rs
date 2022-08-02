@@ -13,9 +13,6 @@ use bevy_egui::{
 #[cfg(feature = "bevy_rapier")]
 use bevy_rapier2d::prelude::Velocity;
 
-#[cfg(feature = "heron")]
-use heron::prelude::Velocity;
-
 struct MoveVisConfig {
     track_duration: Duration,
 }
@@ -186,9 +183,6 @@ fn record_history(
 
             #[cfg(feature = "bevy_rapier")]
             history.velocity.push(velocity.linvel.extend(0.0));
-
-            #[cfg(feature = "heron")]
-            history.velocity.push(velocity.linear);
         }
 
         history_timer.0.tick(time.delta());

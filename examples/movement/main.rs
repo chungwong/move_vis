@@ -60,7 +60,7 @@ fn setup(
     set_gravity(&mut rapier_config, &*player_movement_settings);
     set_jump_power_coefficient(&rapier_config, &mut *player_movement_settings);
 
-    let camera = OrthographicCameraBundle::new_2d();
+    let camera = Camera2dBundle::default();
     commands.spawn_bundle(camera);
 }
 

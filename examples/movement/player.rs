@@ -170,10 +170,6 @@ fn setup_player(mut commands: Commands, player_movement_settings: Res<PlayerMove
         .insert(ExternalImpulse::default())
         .insert(ExternalForce::default())
         .insert(ColliderMassProperties::Density(1.0))
-        .insert(MassProperties {
-            mass: 1.0,
-            ..default()
-        })
         .insert(Velocity::zero())
         .insert_bundle(TransformBundle::from(Transform {
             translation: Vec3::new(-400.0, -40.0, 0.0),
