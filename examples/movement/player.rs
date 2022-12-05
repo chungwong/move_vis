@@ -1,10 +1,7 @@
 use std::convert::TryFrom;
-use std::time::{Duration};
+use std::time::Duration;
 
-use bevy::{
-    prelude::*,
-    utils::Instant
-};
+use bevy::{prelude::*, utils::Instant};
 use bevy_rapier2d::prelude::*;
 
 use move_vis::TrackMovement;
@@ -47,6 +44,7 @@ impl TryFrom<f32> for Direction {
     }
 }
 
+#[derive(Resource)]
 struct DashInput {
     input_timer: Timer,
     direction: Direction,
@@ -55,7 +53,7 @@ struct DashInput {
 impl Default for DashInput {
     fn default() -> Self {
         Self {
-            input_timer: Timer::new(Duration::from_millis(200), false),
+            input_timer: Timer::new(Duration::from_millis(200), TimerMode::Once),
             direction: Direction::Neutral,
         }
     }
@@ -157,26 +155,22 @@ enum JumpStatus {
 }
 
 fn setup_player(mut commands: Commands, player_movement_settings: Res<PlayerMovementSettings>) {
-    commands
-        .spawn()
-        .insert(RigidBody::Dynamic)
-        .insert(Damping {
+    commands.spawn((
+        RigidBody::Dynamic,
+        Damping {
             linear_damping: 10.0,
             ..default()
-        })
-        .insert(LockedAxes::ROTATION_LOCKED)
-        .insert(Collider::cuboid(5.0, 5.0))
-        .insert(GravityScale(player_movement_settings.gravity_scale))
-        .insert(ExternalImpulse::default())
-        .insert(ExternalForce::default())
-        .insert(ColliderMassProperties::Density(1.0))
-        .insert(Velocity::zero())
-        .insert_bundle(TransformBundle::from(Transform {
-            translation: Vec3::new(-400.0, -40.0, 0.0),
-            ..default()
-        }))
-        .insert(TrackMovement)
-        .insert(PlayerControl::new());
+        },
+        LockedAxes::ROTATION_LOCKED,
+        Collider::cuboid(5.0, 5.0),
+        GravityScale(player_movement_settings.gravity_scale),
+        ExternalImpulse::default(),
+        ExternalForce::default(),
+        ColliderMassProperties::Density(1.0),
+        Velocity::zero(),
+        TrackMovement,
+        PlayerControl::new(),
+    ));
 }
 
 #[derive(Component, Debug, Default)]

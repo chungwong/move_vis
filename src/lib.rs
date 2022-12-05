@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy_egui::{
     egui::{
         self,
-        plot::{Legend, Line, Plot, Value, Values},
+        plot::{Legend, Line, Plot, PlotPoints},
     },
     EguiContext,
 };
@@ -13,6 +13,7 @@ use bevy_egui::{
 #[cfg(feature = "bevy_rapier")]
 use bevy_rapier2d::prelude::Velocity;
 
+#[derive(Resource)]
 struct MoveVisConfig {
     track_duration: Duration,
 }
@@ -54,7 +55,7 @@ fn setup(
     query: Query<Entity, Added<TrackMovement>>,
 ) {
     for entity in query.iter() {
-        let mut timer = Timer::new(move_vis_config.track_duration, false);
+        let mut timer = Timer::new(move_vis_config.track_duration, TimerMode::Once);
         timer.pause();
 
         cmd.entity(entity)
@@ -64,23 +65,25 @@ fn setup(
 }
 
 fn plot_distance(ui: &mut egui::Ui, history: &History) {
-    let horizontal_distance = Line::new(Values::from_values_iter(
+    let horizontal_distance = Line::new(
         history
             .distance
             .iter()
             .enumerate()
-            .map(|(x, &v)| Value::new(x as f64, v.x as f64)),
-    ))
+            .map(|(x, &v)| [x as f64, v.x as f64])
+            .collect::<PlotPoints>(),
+    )
     .color(egui::Color32::from_rgb(235, 171, 52))
     .name("Horizonal Distance");
 
-    let vertical_distance = Line::new(Values::from_values_iter(
+    let vertical_distance = Line::new(
         history
             .distance
             .iter()
             .enumerate()
-            .map(|(x, &v)| Value::new(x as f64, v.y as f64)),
-    ))
+            .map(|(x, &v)| [x as f64, v.y as f64])
+            .collect::<PlotPoints>(),
+    )
     .color(egui::Color32::from_rgb(235, 64, 52))
     .name("Vertical Distance");
 
@@ -94,23 +97,25 @@ fn plot_distance(ui: &mut egui::Ui, history: &History) {
 }
 
 fn plot_velocity(ui: &mut egui::Ui, history: &History) {
-    let horinzontal_velocity = Line::new(Values::from_values_iter(
+    let horinzontal_velocity = Line::new(
         history
             .velocity
             .iter()
             .enumerate()
-            .map(|(x, &v)| Value::new(x as f64, v.x as f64)),
-    ))
+            .map(|(x, &v)| [x as f64, v.x as f64])
+            .collect::<PlotPoints>(),
+    )
     .color(egui::Color32::from_rgb(100, 200, 100))
     .name("Horizontal Velocity");
 
-    let vertical_velocity = Line::new(Values::from_values_iter(
+    let vertical_velocity = Line::new(
         history
             .velocity
             .iter()
             .enumerate()
-            .map(|(x, &v)| Value::new(x as f64, v.y as f64)),
-    ))
+            .map(|(x, &v)| [x as f64, v.y as f64])
+            .collect::<PlotPoints>(),
+    )
     .color(egui::Color32::from_rgb(100, 150, 250))
     .name("Vertical Velocity");
 

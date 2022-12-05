@@ -61,7 +61,7 @@ fn setup(
     set_jump_power_coefficient(&rapier_config, &mut *player_movement_settings);
 
     let camera = Camera2dBundle::default();
-    commands.spawn_bundle(camera);
+    commands.spawn(camera);
 }
 
 /// what is the gravity that would allow jumping to a given height?
@@ -86,7 +86,7 @@ fn set_jump_power_coefficient(
     player_movement_settings.jump_power_coefficient *= 50.0 / SCALE.powf(2.0);
 }
 
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct PlayerMovementSettings {
     // metre
     pub jump_height: f32,

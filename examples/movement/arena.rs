@@ -17,12 +17,12 @@ fn setup_arena(mut commands: Commands) {
         (450.0, 50.0, 200.0, 20.0, std::f32::consts::FRAC_PI_4),
         (-600.0, 50.0, 200.0, 20.0, std::f32::consts::FRAC_PI_2),
     ] {
-        commands
-            .spawn()
-            .insert(RigidBody::Fixed)
-            .insert_bundle(TransformBundle::from(
+        commands.spawn((
+            RigidBody::Fixed,
+            TransformBundle::from(
                 Transform::from_xyz(x, y, 0.0).with_rotation(Quat::from_rotation_z(rotation)),
-            ))
-            .insert(Collider::cuboid(half_width, half_height));
+            ),
+            Collider::cuboid(half_width, half_height),
+        ));
     }
 }
